@@ -1,0 +1,246 @@
+---
+title: "Bankruptcy Data Analysis"
+author: "Changsoo Byun"
+date: "April 19, 2023"
+output: github_document
+---
+
+
+```{r, echo=FALSE ,eval=TRUE,message=FALSE}
+# Load the packages that you will use to complete this assignment.
+library(tidyverse)
+library(pROC)
+library(glmnet)
+library(forecast)
+library(rpart)
+library(rpart.plot)
+library(caret)
+library(gridExtra)
+
+```
+
+\newpage
+
+### A Preliminary analysis
+
+#Predictor4 - current assests/ short-term liabilities [Current Ratio]
+#Predictor6 - retained earnings/ total assets
+#Predictor11 - (gross profit + extraordinary items + financial expenses) / total assets [Return on Assets (ROA) ratio]
+#Predictor19 - gross profit / sales [Gross Profit Margin]
+#Predictor23 - net profit / sales [Net Profit Margin]
+#Predictor29 - logarithm of total assets 
+#Predictor33 - operating expenses / short-term liabilities
+#Predictor34 - operating expenses / total liabilities
+#Predictor41 - total liabilities / ((profit on operating activities + depreciation) * (12/365))
+#Predictor63 - sales / short-term liabilities
+
+```{r}
+data <- read.csv('data.csv')
+data = as_tibble(data)
+
+head(data,10)
+```
+
+
+```{r}
+colSums(is.na(data))
+```
+
+
+```{r}
+data_clean <- drop_na(data)
+
+data_clean
+```
+
+#The result provides the descriptive statistics for each variable. We can use this to see the distribution of the vrairbles, outliers and correlation.
+
+```{r}
+summary(data_clean)
+```
+
+
+```{r}
+p4b <- ggplot(data_clean, aes(x = isBankrupted, y = Predictor4, fill = factor(isBankrupted))) + 
+  geom_boxplot() + 
+  labs(title = "Boxplot of Predictor4", x = "IsBankrupted", y = "Predictor4")
+p6b <- ggplot(data_clean, aes(x = isBankrupted, y = Predictor6, fill = factor(isBankrupted))) + 
+  geom_boxplot() + 
+  labs(title = "Boxplot of Predictor6", x = "IsBankrupted", y = "Predictor6")
+p11b <- ggplot(data_clean, aes(x = isBankrupted, y = Predictor11, fill = factor(isBankrupted))) + 
+  geom_boxplot() + 
+  labs(title = "Boxplot of Predictor11", x = "IsBankrupted", y = "Predictor11")
+p19b <- ggplot(data_clean, aes(x = isBankrupted, y = Predictor19, fill = factor(isBankrupted))) + 
+  geom_boxplot() + 
+  labs(title = "Boxplot of Predictor19", x = "IsBankrupted", y = "Predictor19")
+grid.arrange(p4b, p6b, p11b, p19b, nrow = 2, ncol = 2)
+```
+
+#Predictor4 is left-skeweed, Predictor 6 and 19 are right skewed and Predictor11 is normally distributed.The IQR boxes show the same position for both 1 and 0, possibly indicating  the predictor variables are not strongly associated with the outcome variable (bankruptcy), or that they are not able to discriminate between the two groups effectively with this method.
+
+
+#Since they have wide range of values and skewed, log scale visualizes better plot. It seems like Predictor4 and 63 have postive correlation by looking at the scatter plot. And most of them are not bankrupted as the values for these two increase.
+
+
+```{r, warning=FALSE}
+log_Predictor4 <- log(data_clean$Predictor4)
+log_Predictor63 <- log(data_clean$Predictor63)
+
+scatter <- ggplot(data_clean, aes(x =log_Predictor4, y = log_Predictor63, color = factor(isBankrupted))) + 
+  geom_point(alpha=0.5) +
+  xlim(0, 10) + 
+  ylim(0, 10)+
+  labs(x = "Predictor4", y = "Predictor63", color = "isBankrupted")
+
+scatter
+```
+
+
+
+### B Logistic Regression
+
+#he set.seed() is to ensure consistent outcomes while coding that involves generating variables with random values. The set.seed() function guarantees the production of the same random values whenever the code is run.
+
+```{r}
+set.seed(123)
+```
+
+
+```{r}
+n=nrow(data_clean)
+index <- sample(1:n,1000)
+
+
+data_clean |> 
+  slice(index) -> dataTrain
+data_clean |> 
+  slice(-index) -> dataValid
+
+
+```
+
+
+#AUC is 0.6891. indicating that the logistic regression model has moderate performance to distinguish between positive and negative class values.
+
+```{r,warning=FALSE}
+logisticReg <- glm(isBankrupted ~ .,
+                   data = dataTrain,
+                   family = "binomial")
+
+summary(logisticReg)
+
+Propensity = predict(logisticReg,
+                     dataValid,
+                     type='response')
+
+roc = roc(dataValid$isBankrupted, Propensity,quiet = T)
+auc = auc(roc)
+
+auc
+
+```
+
+
+
+#AUC is 0.5217 in this case. It has lower AUC than the one in question 10, indicating the previous model has better performance.
+
+```{r, warning=FALSE}
+x <- dataTrain$Predictor63
+x2 <- x^2
+x3 <- x^3
+y <- dataTrain$isBankrupted
+
+logisticReg2 <- glm(formula = y ~ x + x2 + x3, family = "binomial")
+
+summary(logisticReg2)
+
+Propensity2 = predict(logisticReg2,
+                     dataValid,
+                     type='response')
+
+roc2 = roc(dataValid$isBankrupted, Propensity2[1:955],quiet = T)
+auc = auc(roc2)
+
+auc
+
+```
+
+
+#The model in question 10 has better performance on predicting new records as it has a higher AUC value which indicates that the model classifies better between postive and negative class points. Plus, the model with more predictors have higher AUC value in general
+
+
+#Logistic regression is a statistical technique used to predict the likelihood of an event using a linear combination of independent variables as a probability model. It should be noted that decision trees are classification methods, whereas logistic regression makes predictions. Therefore, it does not classify as 0 and 1 like the decision tree. Instead, it calculates the probability of belonging to 0 and 1, respectively. The purpose of logistic regression is to represent the relationship between the target variable and the independent variable as a specific function and use it in future predictive models, just like the goal of general regression analysis. This is similar to linear regression analysis in terms of explaining the target variable with a linear combination of independent variables. However, unlike linear regression analysis, logistic regression can also be viewed as a kind of classification technique because the target variable targets categorical data, and the results of the data are divided into specific categories when input data is given.This represents the probability that the target variable belongs to a certain observed value when the independent variable x is given. That is, whatever the value of the independent variable is, it has a probability of having only a value between 0 and 1. This allows the categorical target variable to be predicted as a probability. For reference, if it exceeds 0.5, it is considered a value of 1, and if it is less than 0.5, it is considered a value of 0.
+
+
+
+
+### C Regularization
+
+```{r}
+lassoregcv = cv.glmnet(x = as.matrix(dataTrain%>%select(-isBankrupted)),
+                       y=dataTrain$isBankrupted,
+                       alpha=1)
+
+bestlam = lassoregcv$lambda.min
+bestlam
+
+```
+
+#Predictor11 has the largest value of lamda which seems lke the point regularized at -2.7
+
+```{r}
+lambda = seq(0,0.25,length.out = 50)
+lassoreg = glmnet(x = dataTrain%>%select(-isBankrupted),
+                   y = dataTrain$isBankrupted,
+                   alpha = 1,lambda = lambda)
+ 
+Coeffmat <-as.data.frame(as.matrix(t(coef(lassoreg))))%>%
+   add_column(lambda=lambda[seq(length(lambda),1,-1)])
+
+Coeffmat%>%
+  pivot_longer(c(Predictor4,Predictor6,Predictor11,Predictor19,Predictor23,Predictor29,Predictor33), names_to = "key", values_to = "Coefficients")%>%
+  ggplot(aes(x=log(lambda),y=Coefficients,color=key))+
+  geom_line()+facet_wrap(vars(key),scales='free_y')
+```
+
+
+
+```{r}
+pred_lassoreg = predict(lassoreg,s = bestlam,
+newx = as.matrix(dataValid%>%select(-isBankrupted)))
+accuracy(c(pred_lassoreg),dataValid$isBankrupted)
+```
+
+
+
+### D Classification Trees 
+
+
+```{r}
+Tree <- rpart(isBankrupted ~ ., data = dataTrain, method = "class", cp = 0.01)
+Tree$cptable
+prunedTree = prune(Tree, cp = Tree$cptable[which.min(Tree$cptable[,"xerror"]),"CP"])
+```
+
+
+#12 branches have been selected
+
+```{r}
+rpart.plot(Tree)
+
+printcp(Tree)
+```
+
+
+# the tree model's accuracy is 0.8324607 which is relatively higher than the models in the previous questions
+
+```{r}
+point_pred <- predict(Tree,newdata = dataValid,type = "class")
+predAccuracy = confusionMatrix(point_pred,as.factor(dataValid$isBankrupted))
+predAccuracy$table
+predAccuracy$overall['Accuracy']
+```
+
+#To create a decision tree model, a dataset for training, also known as a learning dataset, is required to estimate the model parameters. The performance indicating how well the dependent variable values of this training dataset were predicted is called in-sample testing.However, one of the purposes of creating a regression analysis model is to predict the value of the dependent variable for new, unseen samples that have not been used for training. This is known as prediction or out-of-sample testing. The evaluation of how well the model can predict the values of dependent variables in a dataset that is not used for training is called cross-validation
+
+
